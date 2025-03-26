@@ -6,39 +6,67 @@
     <title>智能文档问答系统</title>
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- 自定义样式 -->
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <style>
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            background: #f8f9fa;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .upload-area.dragover {
+            background: #e9ecef;
+            border-color: #0d6efd;
+        }
+
+        .upload-list {
+            margin-top: 10px;
+        }
+
+        .upload-item {
+            display: flex;
+            align-items: center;
+            padding: 8px;
+            margin: 5px 0;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+        }
+
+        .upload-item .filename {
+            flex: 1;
+            margin-right: 10px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .upload-item .progress {
+            flex: 2;
+            margin: 0 10px;
+            height: 6px;
+        }
+
         .chat-container {
             height: 400px;
             overflow-y: auto;
+            margin-bottom: 20px;
+            padding: 15px;
             border: 1px solid #dee2e6;
-            border-radius: 0.25rem;
-            padding: 1rem;
-            margin-bottom: 1rem;
+            border-radius: 4px;
         }
-        .message {
-            margin-bottom: 1rem;
-            padding: 0.5rem 1rem;
-            border-radius: 0.25rem;
-        }
-        .user-message {
-            background-color: #e9ecef;
-            margin-left: 20%;
-        }
-        .bot-message {
-            background-color: #007bff;
-            color: white;
-            margin-right: 20%;
-        }
-        .btn-sm {
+
+        .file-action-btn {
             padding: 0.25rem 0.5rem;
             font-size: 0.875rem;
-        }
-        .list-group-item {
-            padding: 1rem;
+            margin-left: 5px;
         }
     </style>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
 <body>
     <div class="container py-5">
@@ -48,13 +76,18 @@
         <div class="card mb-4">
             <div class="card-body">
                 <h5 class="card-title">上传文档</h5>
-                <form id="uploadForm" class="mb-3">
-                    <div class="input-group">
-                        <input type="file" class="form-control" id="fileInput" accept=".pdf">
-                        <button class="btn btn-primary" type="submit">上传</button>
+                <div id="uploadArea" class="upload-area">
+                    <div class="mb-3">
+                        <i class="fas fa-cloud-upload-alt fa-3x text-muted"></i>
+                        <p class="mt-2">拖拽 PDF 文件到这里或点击选择文件</p>
+                        <input type="file" id="fileInput" class="d-none" multiple accept=".pdf">
+                        <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                            选择文件
+                        </button>
                     </div>
-                </form>
-                <div id="uploadStatus" class="alert d-none"></div>
+                    <div id="uploadList" class="upload-list"></div>
+                </div>
+                <div id="uploadStatus" class="alert d-none mt-3"></div>
             </div>
         </div>
 
@@ -84,9 +117,130 @@
 
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
     <!-- 自定义脚本 -->
     <script>
-        // 获取文件列表
+        // 文件上传处理类
+        class FileUploader {
+            constructor() {
+                this.uploadArea = document.getElementById('uploadArea');
+                this.fileInput = document.getElementById('fileInput');
+                this.uploadList = document.getElementById('uploadList');
+                this.setupEventListeners();
+            }
+
+            setupEventListeners() {
+                // 阻止默认拖拽行为
+                ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                    this.uploadArea.addEventListener(eventName, (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    });
+                });
+
+                // 添加拖拽视觉效果
+                ['dragenter', 'dragover'].forEach(eventName => {
+                    this.uploadArea.addEventListener(eventName, () => {
+                        this.uploadArea.classList.add('dragover');
+                    });
+                });
+
+                ['dragleave', 'drop'].forEach(eventName => {
+                    this.uploadArea.addEventListener(eventName, () => {
+                        this.uploadArea.classList.remove('dragover');
+                    });
+                });
+
+                // 处理拖放文件
+                this.uploadArea.addEventListener('drop', (e) => {
+                    const files = Array.from(e.dataTransfer.files);
+                    this.handleFiles(files);
+                });
+
+                // 处理选择文件
+                this.fileInput.addEventListener('change', (e) => {
+                    const files = Array.from(e.target.files);
+                    this.handleFiles(files);
+                });
+            }
+
+            handleFiles(files) {
+                files.forEach(file => {
+                    if (file.type !== 'application/pdf') {
+                        showAlert('danger', `${file.name} 不是PDF文件`);
+                        return;
+                    }
+                    if (file.size > 16 * 1024 * 1024) {
+                        showAlert('danger', `${file.name} 超过16MB限制`);
+                        return;
+                    }
+                    this.uploadFile(file);
+                });
+            }
+
+            uploadFile(file) {
+                // 创建上传项
+                const uploadItem = document.createElement('div');
+                uploadItem.className = 'upload-item';
+                uploadItem.innerHTML = `
+                    <span class="filename" title="${file.name}">${file.name}</span>
+                    <div class="progress">
+                        <div class="progress-bar" role="progressbar" style="width: 0%"></div>
+                    </div>
+                    <span class="status"></span>
+                `;
+                this.uploadList.appendChild(uploadItem);
+
+                const progressBar = uploadItem.querySelector('.progress-bar');
+                const status = uploadItem.querySelector('.status');
+
+                // 上传文件
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const xhr = new XMLHttpRequest();
+                
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const percentComplete = (e.loaded / e.total) * 100;
+                        progressBar.style.width = percentComplete + '%';
+                        progressBar.textContent = percentComplete.toFixed(0) + '%';
+                    }
+                };
+
+                xhr.onload = () => {
+                    if (xhr.status === 200) {
+                        status.innerHTML = '<i class="fas fa-check text-success"></i>';
+                        loadFileList();  // 刷新文件列表
+                        showAlert('success', '文件上传成功！');
+                        // 3秒后移除上传项
+                        setTimeout(() => uploadItem.remove(), 3000);
+                    } else {
+                        status.innerHTML = '<i class="fas fa-times text-danger"></i>';
+                        showAlert('danger', '上传失败');
+                    }
+                };
+
+                xhr.onerror = () => {
+                    status.innerHTML = '<i class="fas fa-times text-danger"></i>';
+                    showAlert('danger', '上传失败');
+                };
+
+                xhr.open('POST', '/upload');
+                xhr.send(formData);
+            }
+        }
+
+        // 显示提示信息
+        function showAlert(type, message) {
+            const alertDiv = document.getElementById('uploadStatus');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.textContent = message;
+            alertDiv.classList.remove('d-none');
+            setTimeout(() => alertDiv.classList.add('d-none'), 3000);
+        }
+
+        // 加载文件列表
         function loadFileList() {
             fetch('/files')
                 .then(response => response.json())
@@ -106,10 +260,10 @@
                                     <small class="text-muted">上传时间：${uploadTime}</small>
                                 </div>
                                 <div>
-                                    <button class="btn btn-primary btn-sm me-2" onclick="previewFile('${file.name}')">
+                                    <button class="btn btn-primary btn-sm file-action-btn" onclick="previewFile('${file.name}')">
                                         <i class="fas fa-eye"></i> 预览
                                     </button>
-                                    <button class="btn btn-danger btn-sm" onclick="deleteFile('${file.name}')">
+                                    <button class="btn btn-danger btn-sm file-action-btn" onclick="deleteFile('${file.name}')">
                                         <i class="fas fa-trash-alt"></i>
                                     </button>
                                 </div>
@@ -124,6 +278,11 @@
                 });
         }
 
+        // 预览文件
+        function previewFile(filename) {
+            window.open(`/preview/${filename}`, '_blank');
+        }
+
         // 删除文件
         function deleteFile(filename) {
             if (confirm(`确定要删除文件 "${filename}" 吗？`)) {
@@ -131,7 +290,7 @@
                     .then(response => response.json())
                     .then(data => {
                         if (data.message) {
-                            loadFileList();  // 重新加载文件列表
+                            loadFileList();
                             showAlert('success', '文件删除成功！');
                         } else {
                             showAlert('danger', data.error || '删除文件失败');
@@ -141,110 +300,11 @@
             }
         }
 
-        // 显示提示信息
-        function showAlert(type, message) {
-            const alertDiv = document.getElementById('uploadStatus');
-            alertDiv.className = `alert alert-${type}`;
-            alertDiv.textContent = message;
-            alertDiv.classList.remove('d-none');
-            setTimeout(() => alertDiv.classList.add('d-none'), 3000);
-        }
-
-        // 修改文件上传处理
-        document.getElementById('uploadForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            const fileInput = document.getElementById('fileInput');
-            const file = fileInput.files[0];
-            
-            // 检查文件大小
-            if (file.size > 16 * 1024 * 1024) {
-                showAlert('danger', '文件大小不能超过 16MB');
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            // 显示上传中状态
-            showAlert('info', '文件上传中...');
-
-            fetch('/upload', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.message) {
-                    showAlert('success', '文件上传成功！');
-                    loadFileList();  // 重新加载文件列表
-                    fileInput.value = '';  // 清空文件输入
-                } else {
-                    showAlert('danger', data.error || '上传失败');
-                }
-            })
-            .catch(error => showAlert('danger', '上传失败'));
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            new FileUploader();
+            loadFileList();
         });
-
-        // 查询处理
-        document.getElementById('queryForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const questionInput = document.getElementById('questionInput');
-            const question = questionInput.value.trim();
-            
-            if (!question) return;
-
-            // 添加用户消息到聊天界面
-            addMessage(question, 'user');
-            questionInput.value = '';
-
-            try {
-                const response = await fetch('/query', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ question })
-                });
-                const data = await response.json();
-                
-                if (response.ok) {
-                    addMessage(data.answer, 'bot');
-                } else {
-                    addMessage('抱歉，查询出错：' + data.error, 'bot');
-                }
-            } catch (error) {
-                addMessage('抱歉，系统出现错误，请重试', 'bot');
-            }
-        });
-
-        // 辅助函数
-        function showStatus(message, type) {
-            const statusDiv = document.getElementById('uploadStatus');
-            statusDiv.textContent = message;
-            statusDiv.className = `alert alert-${type}`;
-            statusDiv.classList.remove('d-none');
-            setTimeout(() => {
-                statusDiv.classList.add('d-none');
-            }, 3000);
-        }
-
-        function addMessage(text, type) {
-            const container = document.getElementById('chatContainer');
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${type}-message`;
-            messageDiv.textContent = text;
-            container.appendChild(messageDiv);
-            container.scrollTop = container.scrollHeight;
-        }
-
-        // 添加预览功能
-        function previewFile(filename) {
-            // 在新窗口中打开预览
-            window.open(`/preview/${filename}`, '_blank');
-        }
-
-        // 页面加载时获取文件列表
-        document.addEventListener('DOMContentLoaded', loadFileList);
     </script>
 </body>
 </html> 

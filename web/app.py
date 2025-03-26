@@ -21,38 +21,48 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    if 'file' not in request.files:
-        return jsonify({'error': '没有文件被上传'}), 400
-    
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': '没有选择文件'}), 400
-    
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+    try:
+        # 检查是否有文件
+        if 'file' not in request.files:
+            return jsonify({'error': '没有文件被上传'}), 400
         
-        # 处理上传的文件
-        try:
-            add_to_chroma([filepath])
-            return jsonify({'message': '文件上传成功并已添加到知识库'})
-        except Exception as e:
-            return jsonify({'error': f'处理文件时出错: {str(e)}'}), 500
-    
-    return jsonify({'error': '不支持的文件类型'}), 400
+        file = request.files['file']
+        
+        # 检查文件名是否为空
+        if file.filename == '':
+            return jsonify({'error': '没有选择文件'}), 400
+        
+        # 检查文件类型
+        if not allowed_file(file.filename):
+            return jsonify({'error': '不支持的文件类型'}), 400
+        
+        # 安全地获取文件名并保存文件
+        filename = secure_filename(file.filename)
+        
+        # 确保目录存在
+        if not os.path.exists(app.config['UPLOAD_FOLDER']):
+            os.makedirs(app.config['UPLOAD_FOLDER'])
+            
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
+        
+        # 将文件添加到向量数据库
+        add_to_chroma([file_path])
+        
+        return jsonify({'message': '文件上传成功！'})
+    except Exception as e:
+        return jsonify({'error': f'处理文件时出错: {str(e)}'}), 500
 
 @app.route('/query', methods=['POST'])
 def query():
-    data = request.json
-    question = data.get('question')
-    
-    if not question:
-        return jsonify({'error': '问题不能为空'}), 400
-    
     try:
-        answer = query_rag(question)
-        return jsonify({'answer': answer})
+        data = request.get_json()
+        question = data.get('question', '')
+        if not question:
+            return jsonify({'error': '问题不能为空'}), 400
+            
+        response = query_rag(question)
+        return jsonify({'response': response})
     except Exception as e:
         return jsonify({'error': f'查询时出错: {str(e)}'}), 500
 
@@ -84,4 +94,4 @@ def list_files():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001) 
+    app.run(debug=True) 

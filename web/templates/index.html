@@ -30,6 +30,13 @@
             color: white;
             margin-right: 20%;
         }
+        .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
+        }
+        .list-group-item {
+            padding: 1rem;
+        }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 </head>
@@ -79,36 +86,103 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <!-- 自定义脚本 -->
     <script>
-        // 文件上传处理
-        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+        // 获取文件列表
+        function loadFileList() {
+            fetch('/files')
+                .then(response => response.json())
+                .then(files => {
+                    const fileList = document.getElementById('fileList');
+                    fileList.innerHTML = '';
+                    files.forEach(file => {
+                        const fileSize = (file.size / 1024).toFixed(2) + ' KB';
+                        const uploadTime = new Date(file.uploadTime * 1000).toLocaleString();
+                        const fileItem = `
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <i class="far fa-file-pdf text-danger me-2"></i>
+                                    ${file.name}
+                                    <small class="text-muted ms-2">${fileSize}</small>
+                                    <br>
+                                    <small class="text-muted">上传时间：${uploadTime}</small>
+                                </div>
+                                <div>
+                                    <button class="btn btn-primary btn-sm me-2" onclick="previewFile('${file.name}')">
+                                        <i class="fas fa-eye"></i> 预览
+                                    </button>
+                                    <button class="btn btn-danger btn-sm" onclick="deleteFile('${file.name}')">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                        fileList.innerHTML += fileItem;
+                    });
+                })
+                .catch(error => {
+                    console.error('获取文件列表失败:', error);
+                    showAlert('danger', '获取文件列表失败');
+                });
+        }
+
+        // 删除文件
+        function deleteFile(filename) {
+            if (confirm(`确定要删除文件 "${filename}" 吗？`)) {
+                fetch(`/files/${filename}`, { method: 'DELETE' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.message) {
+                            loadFileList();  // 重新加载文件列表
+                            showAlert('success', '文件删除成功！');
+                        } else {
+                            showAlert('danger', data.error || '删除文件失败');
+                        }
+                    })
+                    .catch(error => showAlert('danger', '删除文件失败'));
+            }
+        }
+
+        // 显示提示信息
+        function showAlert(type, message) {
+            const alertDiv = document.getElementById('uploadStatus');
+            alertDiv.className = `alert alert-${type}`;
+            alertDiv.textContent = message;
+            alertDiv.classList.remove('d-none');
+            setTimeout(() => alertDiv.classList.add('d-none'), 3000);
+        }
+
+        // 修改文件上传处理
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
             e.preventDefault();
             const fileInput = document.getElementById('fileInput');
-            const statusDiv = document.getElementById('uploadStatus');
+            const file = fileInput.files[0];
             
-            if (!fileInput.files.length) {
-                showStatus('请选择文件', 'danger');
+            // 检查文件大小
+            if (file.size > 16 * 1024 * 1024) {
+                showAlert('danger', '文件大小不能超过 16MB');
                 return;
             }
 
             const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
+            formData.append('file', file);
 
-            try {
-                const response = await fetch('/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
-                
+            // 显示上传中状态
+            showAlert('info', '文件上传中...');
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
                 if (data.message) {
-                    loadFileList();
-                    showStatus(data.message, 'success');
+                    showAlert('success', '文件上传成功！');
+                    loadFileList();  // 重新加载文件列表
+                    fileInput.value = '';  // 清空文件输入
                 } else {
-                    showStatus(data.error, 'danger');
+                    showAlert('danger', data.error || '上传失败');
                 }
-            } catch (error) {
-                showStatus('上传失败，请重试', 'danger');
-            }
+            })
+            .catch(error => showAlert('danger', '上传失败'));
         });
 
         // 查询处理
@@ -163,34 +237,13 @@
             container.scrollTop = container.scrollHeight;
         }
 
-        // 加载文件列表
-        function loadFileList() {
-            fetch('/files')
-                .then(response => response.json())
-                .then(data => {
-                    const fileList = document.getElementById('fileList');
-                    fileList.innerHTML = '';
-                    
-                    data.files.forEach(file => {
-                        const fileDate = new Date(file.upload_time * 1000).toLocaleString();
-                        const fileItem = document.createElement('div');
-                        fileItem.className = 'list-group-item d-flex justify-content-between align-items-center';
-                        fileItem.innerHTML = `
-                            <div>
-                                <i class="fas fa-file-pdf text-danger me-2"></i>
-                                ${file.name}
-                                <small class="text-muted ms-2">${file.size}KB</small>
-                                <br>
-                                <small class="text-muted">上传时间: ${fileDate}</small>
-                            </div>
-                        `;
-                        fileList.appendChild(fileItem);
-                    });
-                })
-                .catch(error => console.error('Error:', error));
+        // 添加预览功能
+        function previewFile(filename) {
+            // 在新窗口中打开预览
+            window.open(`/preview/${filename}`, '_blank');
         }
 
-        // 页面加载时显示文件列表
+        // 页面加载时获取文件列表
         document.addEventListener('DOMContentLoaded', loadFileList);
     </script>
 </body>

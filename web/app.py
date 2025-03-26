@@ -3,6 +3,8 @@ import os
 from werkzeug.utils import secure_filename
 from populate_database import add_to_chroma
 from query_data import query_rag
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 app = Flask(__name__)
 
@@ -46,8 +48,18 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
         
-        # 将文件添加到向量数据库
-        add_to_chroma([file_path])
+        # 加载PDF文件并分割文本
+        loader = PyPDFLoader(file_path)
+        pages = loader.load()
+        
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200
+        )
+        chunks = text_splitter.split_documents(pages)
+        
+        # 将分割后的文档添加到向量数据库
+        add_to_chroma(chunks)
         
         return jsonify({'message': '文件上传成功！'})
     except Exception as e:

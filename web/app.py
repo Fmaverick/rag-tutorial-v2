@@ -56,5 +56,32 @@ def query():
     except Exception as e:
         return jsonify({'error': f'查询时出错: {str(e)}'}), 500
 
+@app.route('/files', methods=['GET'])
+def list_files():
+    """列出所有上传的PDF文件"""
+    try:
+        # 确保上传文件夹存在
+        if not os.path.exists(app.config['UPLOAD_FOLDER']):
+            os.makedirs(app.config['UPLOAD_FOLDER'])
+            
+        # 获取所有PDF文件
+        files = os.listdir(app.config['UPLOAD_FOLDER'])
+        pdf_files = [f for f in files if f.endswith('.pdf')]
+        
+        # 为每个文件添加更多信息
+        files_info = []
+        for file in pdf_files:
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], file)
+            file_info = {
+                'name': file,
+                'size': os.path.getsize(file_path) // 1024,  # 转换为KB
+                'upload_time': os.path.getctime(file_path)  # 获取创建时间
+            }
+            files_info.append(file_info)
+            
+        return jsonify({'files': files_info})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, port=5001) 

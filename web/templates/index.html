@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能文档问答系统</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- 自定义样式 -->
+    <style>
+        .chat-container {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 0.25rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .message {
+            margin-bottom: 1rem;
+            padding: 0.5rem 1rem;
+            border-radius: 0.25rem;
+        }
+        .user-message {
+            background-color: #e9ecef;
+            margin-left: 20%;
+        }
+        .bot-message {
+            background-color: #007bff;
+            color: white;
+            margin-right: 20%;
+        }
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+</head>
+<body>
+    <div class="container py-5">
+        <h1 class="text-center mb-4">智能文档问答系统</h1>
+        
+        <!-- 文件上传区域 -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">上传文档</h5>
+                <form id="uploadForm" class="mb-3">
+                    <div class="input-group">
+                        <input type="file" class="form-control" id="fileInput" accept=".pdf">
+                        <button class="btn btn-primary" type="submit">上传</button>
+                    </div>
+                </form>
+                <div id="uploadStatus" class="alert d-none"></div>
+            </div>
+        </div>
+
+        <!-- 已上传文件区域 -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">已上传文件</h5>
+                <div id="fileList" class="list-group">
+                    <!-- 文件列表将在这里显示 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 聊天区域 -->
+        <div class="card">
+            <div class="card-body">
+                <div class="chat-container" id="chatContainer"></div>
+                <form id="queryForm">
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="questionInput" placeholder="请输入您的问题...">
+                        <button class="btn btn-primary" type="submit">发送</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- 自定义脚本 -->
+    <script>
+        // 文件上传处理
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const fileInput = document.getElementById('fileInput');
+            const statusDiv = document.getElementById('uploadStatus');
+            
+            if (!fileInput.files.length) {
+                showStatus('请选择文件', 'danger');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.message) {
+                    loadFileList();
+                    showStatus(data.message, 'success');
+                } else {
+                    showStatus(data.error, 'danger');
+                }
+            } catch (error) {
+                showStatus('上传失败，请重试', 'danger');
+            }
+        });
+
+        // 查询处理
+        document.getElementById('queryForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const questionInput = document.getElementById('questionInput');
+            const question = questionInput.value.trim();
+            
+            if (!question) return;
+
+            // 添加用户消息到聊天界面
+            addMessage(question, 'user');
+            questionInput.value = '';
+
+            try {
+                const response = await fetch('/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ question })
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addMessage(data.answer, 'bot');
+                } else {
+                    addMessage('抱歉，查询出错：' + data.error, 'bot');
+                }
+            } catch (error) {
+                addMessage('抱歉，系统出现错误，请重试', 'bot');
+            }
+        });
+
+        // 辅助函数
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('uploadStatus');
+            statusDiv.textContent = message;
+            statusDiv.className = `alert alert-${type}`;
+            statusDiv.classList.remove('d-none');
+            setTimeout(() => {
+                statusDiv.classList.add('d-none');
+            }, 3000);
+        }
+
+        function addMessage(text, type) {
+            const container = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}-message`;
+            messageDiv.textContent = text;
+            container.appendChild(messageDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // 加载文件列表
+        function loadFileList() {
+            fetch('/files')
+                .then(response => response.json())
+                .then(data => {
+                    const fileList = document.getElementById('fileList');
+                    fileList.innerHTML = '';
+                    
+                    data.files.forEach(file => {
+                        const fileDate = new Date(file.upload_time * 1000).toLocaleString();
+                        const fileItem = document.createElement('div');
+                        fileItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+                        fileItem.innerHTML = `
+                            <div>
+                                <i class="fas fa-file-pdf text-danger me-2"></i>
+                                ${file.name}
+                                <small class="text-muted ms-2">${file.size}KB</small>
+                                <br>
+                                <small class="text-muted">上传时间: ${fileDate}</small>
+                            </div>
+                        `;
+                        fileList.appendChild(fileItem);
+                    });
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        // 页面加载时显示文件列表
+        document.addEventListener('DOMContentLoaded', loadFileList);
+    </script>
+</body>
+</html> 

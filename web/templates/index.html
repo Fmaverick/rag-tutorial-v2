@@ -55,10 +55,59 @@
         .chat-container {
             height: 400px;
             overflow-y: auto;
-            margin-bottom: 20px;
             padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
             border: 1px solid #dee2e6;
-            border-radius: 4px;
+        }
+
+        .chat-message {
+            max-width: 85%;
+            margin-bottom: 1rem;
+        }
+
+        .chat-message.user {
+            margin-left: auto;
+        }
+
+        .message-content {
+            border-radius: 15px;
+            padding: 10px 15px;
+            word-wrap: break-word;
+        }
+
+        .user .message-content {
+            background: #0d6efd;
+            color: white;
+            border-radius: 15px 15px 0 15px;
+        }
+
+        .system .message-content {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 15px 15px 15px 0;
+        }
+
+        .typing-indicator {
+            display: flex;
+            padding: 10px;
+            gap: 5px;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            background: #0d6efd;
+            border-radius: 50%;
+            animation: typing 1s infinite ease-in-out;
+        }
+
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
         }
 
         .file-action-btn {
@@ -94,7 +143,12 @@
         <!-- 已上传文件区域 -->
         <div class="card mb-4">
             <div class="card-body">
-                <h5 class="card-title">已上传文件</h5>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5>已上传文件</h5>
+                    <button class="btn btn-warning btn-sm" onclick="resetFileList()">
+                        <i class="fas fa-sync"></i> 重置文件列表
+                    </button>
+                </div>
                 <div id="fileList" class="list-group">
                     <!-- 文件列表将在这里显示 -->
                 </div>
@@ -104,11 +158,21 @@
         <!-- 聊天区域 -->
         <div class="card">
             <div class="card-body">
-                <div class="chat-container" id="chatContainer"></div>
-                <form id="queryForm">
+                <div class="chat-container" id="chatContainer">
+                    <!-- 欢迎消息 -->
+                    <div class="chat-message system">
+                        <div class="message-content">
+                            👋 你好！我是你的文档助手，请问有什么可以帮你的吗？
+                        </div>
+                    </div>
+                </div>
+                <form id="queryForm" class="mt-3">
                     <div class="input-group">
-                        <input type="text" class="form-control" id="questionInput" placeholder="请输入您的问题...">
-                        <button class="btn btn-primary" type="submit">发送</button>
+                        <input type="text" class="form-control" id="questionInput" 
+                               placeholder="请输入您的问题..." autocomplete="off">
+                        <button class="btn btn-primary" type="submit">
+                            <i class="fas fa-paper-plane"></i> 发送
+                        </button>
                     </div>
                 </form>
             </div>
@@ -285,26 +349,170 @@
 
         // 删除文件
         function deleteFile(filename) {
-            if (confirm(`确定要删除文件 "${filename}" 吗？`)) {
-                fetch(`/files/${filename}`, { method: 'DELETE' })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.message) {
-                            loadFileList();
-                            showAlert('success', '文件删除成功！');
-                        } else {
-                            showAlert('danger', data.error || '删除文件失败');
-                        }
-                    })
-                    .catch(error => showAlert('danger', '删除文件失败'));
+            if (confirm(`确定要删除文件 ${filename} 吗？`)) {
+                fetch('/delete_file', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ filename: filename })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('success', data.message);
+                        // 直接使用返回的文件列表更新UI
+                        updateFileList(data.files);
+                    } else {
+                        showToast('error', data.message);
+                    }
+                })
+                .catch(error => {
+                    showToast('error', '删除操作失败');
+                    console.error('Error:', error);
+                });
             }
         }
+
+        function updateFileList(files) {
+            const fileList = document.getElementById('fileList');
+            fileList.innerHTML = '';
+            files.forEach(file => {
+                const fileItem = createFileListItem(file);
+                fileList.appendChild(fileItem);
+            });
+        }
+
+        function showToast(type, message) {
+            const toast = document.getElementById('alertToast');
+            const toastBody = toast.querySelector('.toast-body');
+            toastBody.textContent = message;
+            toast.classList.remove('bg-success', 'bg-danger');
+            toast.classList.add(type === 'success' ? 'bg-success' : 'bg-danger');
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+        }
+
+        // 添加聊天消息到界面
+        function appendChatMessage(message, isUser) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `chat-message ${isUser ? 'user' : 'system'}`;
+            messageDiv.innerHTML = `
+                <div class="message-content">
+                    ${message}
+                </div>
+            `;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // 显示正在输入状态
+        function showTypingIndicator() {
+            const chatContainer = document.getElementById('chatContainer');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'chat-message system typing-indicator';
+            typingDiv.id = 'typingIndicator';
+            typingDiv.innerHTML = `
+                <div class="message-content">
+                    <div class="d-flex align-items-center">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                </div>
+            `;
+            chatContainer.appendChild(typingDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // 移除正在输入状态
+        function removeTypingIndicator() {
+            const typingIndicator = document.getElementById('typingIndicator');
+            if (typingIndicator) {
+                typingIndicator.remove();
+            }
+        }
+
+        // 处理问答功能
+        document.getElementById('queryForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const questionInput = document.getElementById('questionInput');
+            const question = questionInput.value.trim();
+            
+            if (!question) return;
+
+            // 禁用输入和发送按钮
+            questionInput.disabled = true;
+            e.target.querySelector('button').disabled = true;
+
+            // 显示用户问题
+            appendChatMessage(question, true);
+            
+            // 显示正在输入状态
+            showTypingIndicator();
+
+            try {
+                const response = await fetch('/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('获取答案失败');
+                }
+
+                const data = await response.json();
+                removeTypingIndicator();
+                appendChatMessage(data.answer, false);
+            } catch (error) {
+                removeTypingIndicator();
+                appendChatMessage('抱歉，处理您的问题时出现错误，请稍后重试。', false);
+                showAlert('danger', '获取答案失败');
+            } finally {
+                // 重新启用输入和发送按钮
+                questionInput.disabled = false;
+                e.target.querySelector('button').disabled = false;
+                questionInput.value = '';
+                questionInput.focus();
+            }
+        });
+
+        // 添加快捷键支持
+        document.getElementById('questionInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                document.getElementById('queryForm').dispatchEvent(new Event('submit'));
+            }
+        });
 
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
             new FileUploader();
             loadFileList();
         });
+
+        function resetFileList() {
+            if (confirm('确定要重置文件列表吗？这将清除所有文件记录。')) {
+                fetch('/reset_files', {
+                    method: 'POST',
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('success', data.message);
+                        updateFileList(data.files);
+                    } else {
+                        showToast('error', data.message);
+                    }
+                })
+                .catch(error => {
+                    showToast('error', '重置失败');
+                    console.error('Error:', error);
+                });
+            }
+        }
     </script>
 </body>
 </html> 

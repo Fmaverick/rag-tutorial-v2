@@ -1,16 +1,26 @@
 from flask import Flask, render_template, request, jsonify, send_file
 import os
+import sys
+import json
+
+# 添加项目根目录到 Python 路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(current_dir)
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
+# 导入其他模块
+from populate_database import add_to_chroma
+from query_data import query_rag
 from werkzeug.utils import secure_filename
 from PyPDF2 import PdfReader
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from populate_database import add_to_chroma
-from query_data import query_rag
-
-# 获取当前文件的目录
-current_dir = os.path.dirname(os.path.abspath(__file__))
-# 获取项目根目录
-ROOT_DIR = os.path.dirname(current_dir)
+from langchain.prompts import PromptTemplate
+from langchain.chains import RetrievalQA
+from langchain_community.llms import OpenAI
+from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
 
 app = Flask(__name__,
     template_folder=os.path.join(current_dir, 'templates'),
@@ -18,7 +28,7 @@ app = Flask(__name__,
 )
 
 # 配置上传文件存储路径
-UPLOAD_FOLDER = os.path.join(ROOT_DIR, 'data')
+UPLOAD_FOLDER = os.path.join(root_dir, 'data')
 ALLOWED_EXTENSIONS = {'pdf'}
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
 
@@ -89,15 +99,38 @@ def upload_file():
 @app.route('/query', methods=['POST'])
 def query():
     try:
-        data = request.get_json()
+        data = request.json
         question = data.get('question', '')
-        if not question:
-            return jsonify({'error': '问题不能为空'}), 400
+        
+        # 检查是否有上传的文档
+        if not has_uploaded_documents():
+            return jsonify({
+                'answer': '请先上传 PDF 文档，我才能帮助回答问题。'
+            })
+        
+        # 获取答案和源文档
+        result = qa_chain({"query": question})
+        
+        # 如果答案中包含"抱歉"或"找不到"等词，说明文档中没有相关信息
+        if any(phrase in result['result'].lower() for phrase in ["抱歉", "找不到", "无法"]):
+            return jsonify({
+                'answer': '抱歉，我在当前上传的文档中找不到相关信息。请确保您的问题与文档内容相关。'
+            })
             
-        response = query_rag(question)
-        return jsonify({'response': response})
+        # 构造响应
+        response = {
+            'answer': result['result'],
+            'source': '基于文档内容的回答'
+        }
+        
+        return jsonify(response)
+        
     except Exception as e:
-        return jsonify({'error': f'查询时出错: {str(e)}'}), 500
+        print(f"查询处理出错: {str(e)}")
+        return jsonify({
+            'answer': '抱歉，处理您的问题时出现错误。请稍后再试。',
+            'error': str(e)
+        })
 
 @app.route('/files', methods=['GET'])
 def list_files():
@@ -119,20 +152,74 @@ def list_files():
         print(f"List files error: {str(e)}")  # 添加调试信息
         return jsonify({'error': f'获取文件列表失败: {str(e)}'}), 500
 
-@app.route('/files/<filename>', methods=['DELETE'])
-def delete_file(filename):
+@app.route('/get_files', methods=['GET'])
+def get_files():
+    """获取文件列表的API端点"""
     try:
-        if not allowed_file(filename):
-            return jsonify({'error': '不支持的文件类型'}), 400
+        upload_folder = app.config['UPLOAD_FOLDER']
+        record_path = os.path.join(upload_folder, '.records.json')
         
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(filename))
+        # 如果记录文件不存在，创建空记录
+        if not os.path.exists(record_path):
+            with open(record_path, 'w') as f:
+                json.dump([], f)
+            return jsonify({'files': []})
+            
+        # 读取并验证文件列表
+        with open(record_path, 'r') as f:
+            records = json.load(f)
+            
+        # 只保留实际存在的文件记录
+        valid_records = []
+        for record in records:
+            file_path = os.path.join(upload_folder, record['filename'])
+            if os.path.exists(file_path):
+                valid_records.append(record)
+        
+        # 更新记录文件
+        with open(record_path, 'w') as f:
+            json.dump(valid_records, f)
+            
+        return jsonify({'files': valid_records})
+    except Exception as e:
+        print(f"获取文件列表时出错: {str(e)}")
+        # 出错时返回空列表，避免前端报错
+        return jsonify({'files': []})
+
+@app.route('/delete_file', methods=['POST'])
+def delete_file():
+    """删除文件的API端点"""
+    try:
+        data = request.json
+        filename = data.get('filename')
+        
+        upload_folder = app.config['UPLOAD_FOLDER']
+        file_path = os.path.join(upload_folder, filename)
+        record_path = os.path.join(upload_folder, '.records.json')
+        
+        # 删除物理文件（如果存在）
         if os.path.exists(file_path):
             os.remove(file_path)
-            return jsonify({'message': '文件删除成功'})
-        else:
-            return jsonify({'error': '文件不存在'}), 404
+        
+        # 更新记录文件
+        if os.path.exists(record_path):
+            with open(record_path, 'r') as f:
+                records = json.load(f)
+            # 过滤掉要删除的文件记录
+            records = [r for r in records if r['filename'] != filename]
+            with open(record_path, 'w') as f:
+                json.dump(records, f)
+        
+        return jsonify({
+            'success': True,
+            'message': f'文件 {filename} 已删除',
+            'files': records  # 返回更新后的文件列表
+        })
     except Exception as e:
-        return jsonify({'error': f'删除文件失败: {str(e)}'}), 500
+        return jsonify({
+            'success': False,
+            'message': f'删除失败：{str(e)}'
+        })
 
 @app.route('/preview/<filename>')
 def preview_file(filename):
@@ -161,6 +248,84 @@ def preview_file(filename):
     except Exception as e:
         print(f"Preview error: {str(e)}")  # 打印错误信息
         return jsonify({'error': f'预览文件失败: {str(e)}'}), 500
+
+# 添加一个初始化函数来清理文件记录
+def initialize_file_records():
+    """初始化并清理文件记录"""
+    upload_folder = app.config['UPLOAD_FOLDER']
+    record_path = os.path.join(upload_folder, '.records.json')
+    
+    try:
+        # 如果记录文件存在，删除它
+        if os.path.exists(record_path):
+            os.remove(record_path)
+            
+        # 创建新的空记录文件
+        with open(record_path, 'w') as f:
+            json.dump([], f)
+            
+        print("文件记录已重置")
+    except Exception as e:
+        print(f"重置文件记录时出错: {str(e)}")
+
+@app.route('/reset_files', methods=['POST'])
+def reset_files():
+    """重置文件记录的API端点"""
+    try:
+        initialize_file_records()
+        return jsonify({
+            'success': True,
+            'message': '文件记录已重置',
+            'files': []
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'重置失败：{str(e)}'
+        })
+
+# 修改 QA 系统配置
+def setup_qa_system():
+    # 1. 更严格的相似度阈值
+    retriever = vectorstore.as_retriever(
+        search_type="similarity",
+        search_kwargs={
+            "k": 3,  # 减少返回的文档数量
+            "score_threshold": 0.7  # 提高相似度阈值
+        }
+    )
+    
+    # 2. 更明确的 prompt 模板
+    prompt_template = """使用以下已知信息来回答问题。如果无法从提供的信息中找到答案，请直接说"抱歉，我在文档中找不到相关信息"。
+    不要编造或推测任何文档中没有的信息。
+
+    已知信息:
+    {context}
+
+    问题: {question}
+
+    请只基于上述信息回答。如果信息不足，请直接说明。"""
+    
+    PROMPT = PromptTemplate(
+        template=prompt_template, 
+        input_variables=["context", "question"]
+    )
+    
+    # 3. 配置 QA 链
+    chain_type_kwargs = {
+        "prompt": PROMPT,
+        "verbose": True
+    }
+    
+    qa_chain = RetrievalQA.from_chain_type(
+        llm=OpenAI(temperature=0),  # 降低创造性，提高准确性
+        chain_type="stuff",
+        retriever=retriever,
+        chain_type_kwargs=chain_type_kwargs,
+        return_source_documents=True  # 返回源文档信息
+    )
+    
+    return qa_chain
 
 if __name__ == '__main__':
     # 确保上传目录存在

@@ -1,8 +1,8 @@
 import argparse
 import os
 import shutil
-from langchain_community.document_loaders import PyPDFDirectoryLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFDirectoryLoader, PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema.document import Document
 from get_embedding_function import get_embedding_function
 from langchain_community.vectorstores import Chroma
@@ -104,6 +104,31 @@ def calculate_chunk_ids(chunks):
 def clear_database():
     if os.path.exists(CHROMA_PATH):
         shutil.rmtree(CHROMA_PATH)
+
+
+def add_to_chroma(chunks):
+    # 准备数据库
+    embedding_function = get_embedding_function()
+    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
+
+    # 添加文档
+    try:
+        db.add_documents(chunks)
+        return True
+    except Exception as e:
+        print(f"Error adding documents to database: {str(e)}")
+        return False
+
+
+def load_documents(file_path):
+    loader = PyPDFLoader(file_path)
+    pages = loader.load()
+    
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200
+    )
+    return text_splitter.split_documents(pages)
 
 
 if __name__ == "__main__":
